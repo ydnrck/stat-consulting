@@ -220,8 +220,8 @@ df_freq['e_severity']    = e_severity
 df_freq['expected_cost'] = p_claim * e_severity
 print(df_freq[['p_claim', 'e_severity', 'expected_cost']].describe())
 
-# Assume 25% most expensive clients are unprofitable
-threshold = df_freq['expected_cost'].quantile(0.75)
+# Assume 15% most expensive clients are unprofitable
+threshold = df_freq['expected_cost'].quantile(0.85)
 df_freq['profitable'] = np.where(
     df_freq['expected_cost'] > threshold,
     'Unprofitable', 'Profitable'
