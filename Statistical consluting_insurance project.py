@@ -74,8 +74,6 @@ sev_model = smf.glm(formula=formula, data=df_sev_clean,
 
 print(sev_model.summary())
 
-
-
 #Combining both models
 p_claim = grid_search.predict_proba(X)[:, 1]
 e_severity = sev_model.predict(df_freq)
@@ -109,15 +107,55 @@ output['profitable']    = np.where(output['expected_cost'] > threshold,
                                    'Unprofitable', 'Profitable')
 print(output.head(20).to_string(index=True))
 
-import matplotlib.pyplot as plt
-import numpy as np
+# Misclassification Cost Analysis 
+cm = confusion_matrix(y_test, yhat)
+tn, fp, fn, tp = cm.ravel()
 
+print(f"True Negatives  (correct no claim):  {tn}")
+print(f"False Positives (flagged, no claim):  {fp}")
+print(f"False Negatives (missed claimant):    {fn}")
+print(f"True Positives  (correct claim):      {tp}")
+
+# Cost assumptions
+cost_fp = 50    # administrative cost of incorrectly flagging a non-claimant
+cost_fn = 637   # average claim size from severity MAE (approximation)
+
+total_fp_cost = fp * cost_fp
+total_fn_cost = fn * cost_fn
+total_cost    = total_fp_cost + total_fn_cost
+
+print(f"\n── Misclassification Cost (Test Set: {len(y_test)} policies) ──")
+print(f"False Positive cost:  {fp} × €{cost_fp}  = €{total_fp_cost:,}")
+print(f"False Negative cost:  {fn} × €{cost_fn} = €{total_fn_cost:,}")
+print(f"Total cost:                              €{total_cost:,}")
+
+# Scale to full portfolio
+scale_factor   = len(y) / len(y_test)
+scaled_cost    = total_cost * scale_factor
+print(f"\n── Scaled to Full Portfolio ({len(y):,} policies) ──")
+print(f"Scale factor: {scale_factor:.2f}")
+print(f"Estimated annual misclassification cost: €{scaled_cost:,.0f}")
+
+# Ratio
+ratio = total_fn_cost / total_fp_cost
+print(f"\nFalse Negative cost is {ratio:.1f}x larger than False Positive cost")
+
+# Summary table
+cost_table = pd.DataFrame({
+    'Type':       ['False Positive', 'False Negative', 'Total'],
+    'Count':      [fp,              fn,               fp + fn],
+    'Unit Cost':  [f'€{cost_fp}',  f'€{cost_fn}',   ''],
+    'Total Cost': [f'€{total_fp_cost:,}', f'€{total_fn_cost:,}',
+                   f'€{total_cost:,}']
+})
+print(f"\n{cost_table.to_string(index=False)}")
+
+#Graphs
+#Figure 1
 BLUE  = '#2d6a9f'
 RED   = '#c0392b'
 MUTED = '#888077'
 TEXT  = '#2b2b2b'
-
-# Significant predictors only, as % effect
 names   = ['Density', 'Age', 'Years Insured', 'Cover: Yes',
            'Job: Housewife', 'Gender: Male', 'Job: Self-employed',
            'Car Type: C', 'Job: Unemployed', 'Car Type: D',
@@ -126,12 +164,9 @@ effects = [0.16, -1.24, -0.50, -14.1,
            -10.0, 13.9, 8.4,
            -10.9, 27.2, -18.4,
            -20.3, 96.4]
-
-# Sort by effect size
 sorted_pairs = sorted(zip(effects, names))
 effects_s, names_s = zip(*sorted_pairs)
 colors = [RED if e > 0 else BLUE for e in effects_s]
-
 fig, ax = plt.subplots(figsize=(7, 4))
 fig.patch.set_facecolor('white')
 ax.set_facecolor('white')
@@ -139,7 +174,6 @@ ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
 ax.spines['left'].set_edgecolor('#cccccc')
 ax.spines['bottom'].set_edgecolor('#cccccc')
-
 y_pos = np.arange(len(names_s))
 ax.barh(y_pos, effects_s, color=colors, alpha=0.88, height=0.6)
 ax.axvline(0, color=TEXT, lw=0.8)
@@ -147,31 +181,30 @@ ax.set_yticks(y_pos)
 ax.set_yticklabels(names_s, fontsize=8.5, fontfamily='serif')
 ax.set_xlabel('Effect on Claim Size (%)', fontsize=9,
               fontfamily='serif', color=TEXT)
-ax.set_title('Figure X. Significant Predictors of Claim Severity\n'
-             '(percentage change relative to reference category)',
-             fontsize=9.5, fontweight='bold', fontfamily='serif',
-             color=TEXT, pad=10)
 ax.tick_params(colors=TEXT, labelsize=8.5)
 ax.grid(axis='x', lw=0.5, alpha=0.4, linestyle='--')
 ax.set_axisbelow(True)
-
-# Value labels
 for i, v in enumerate(effects_s):
     offset = 1.5 if v > 0 else -1.5
     ha     = 'left' if v > 0 else 'right'
     label  = f'+{v:.1f}%' if v > 0 else f'{v:.1f}%'
     ax.text(v + offset, i, label, va='center', ha=ha,
             fontsize=7.5, color=TEXT, fontfamily='serif')
-
 ax.set_xlim(min(effects_s) - 15, max(effects_s) + 20)
-
 plt.tight_layout(pad=1.5)
-plt.savefig('figure_severity_coefficients.png', dpi=300,
+plt.savefig('figure_1.png', dpi=300,
             bbox_inches='tight', facecolor='white')
 plt.show()
-print("Saved: figure_severity_coefficients.png")
+print("Saved: figure_1.png")
 
-#Unprofitable Rate by Job 
+#Figure 2 
+def serious_style(ax):
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_edgecolor('#cccccc')
+    ax.spines['bottom'].set_edgecolor('#cccccc')
+    ax.tick_params(colors='#2b2b2b', labelsize=10)
+    ax.set_axisbelow(True)
 fig1, ax1 = plt.subplots(figsize=(8, 5))
 fig1.patch.set_facecolor('white')
 serious_style(ax1)
@@ -180,8 +213,6 @@ ax1.barh(job_categories, unprof_pct, color=bar_colors, alpha=0.9, height=0.5)
 ax1.axvline(15, color=MUTED, lw=1.5, linestyle='--', label='Portfolio threshold (15%)')
 ax1.set_xlabel('Share Flagged as Unprofitable (%)', fontsize=10,
                fontfamily='serif', color=TEXT)
-ax1.set_title('Figure 3. Unprofitable Rate by Occupation',
-              fontsize=11, fontweight='bold', fontfamily='serif', pad=12, color=TEXT)
 ax1.legend(fontsize=9, framealpha=0.4, prop={'family': 'serif'})
 ax1.grid(axis='x', lw=0.6, alpha=0.4, linestyle='--')
 ax1.set_xlim(0, max(unprof_pct) + 10)
@@ -192,7 +223,7 @@ for i, v in enumerate(unprof_pct):
     ax1.text(v + 0.5, i, f'{v:.1f}%', va='center',
              fontsize=9, color=TEXT, fontfamily='serif')
 plt.tight_layout(pad=2.0)
-plt.savefig('figure3_unprofitable_rate.png', dpi=300,
+plt.savefig('figure_2.png', dpi=300,
             bbox_inches='tight', facecolor='white')
 plt.show()
-print("Saved: figure3_unprofitable_rate.png")
+print("Saved: figure_2.png")
