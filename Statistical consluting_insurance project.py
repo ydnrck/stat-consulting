@@ -152,6 +152,10 @@ print(f"\n{cost_table.to_string(index=False)}")
 
 #Graphs
 #Figure 1
+job_counts = df_freq.groupby(['job', 'profitable']).size().unstack(fill_value=0)
+unprof_pct = (job_counts['Unprofitable'] / (job_counts['Unprofitable'] + job_counts['Profitable']) * 100)
+job_categories = unprof_pct.index.tolist()
+unprof_pct = unprof_pct.tolist()
 BLUE  = '#2d6a9f'
 RED   = '#c0392b'
 MUTED = '#888077'
