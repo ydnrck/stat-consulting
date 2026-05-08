@@ -10,8 +10,6 @@ import statsmodels.formula.api as smf
 import statsmodels.api as sm
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy import stats
 
 #Logistic regression
 df_freq= pd.read_csv(r"C:\Users\User\Desktop\KU Leuven. Msc Statistics. Year 1\Statistical Consulting\frequency.csv")
@@ -59,6 +57,34 @@ print(f"\nTest Jaccard Score:  {jaccard_score(y_test, yhat):.3f}")
 print(f"\nClassification Report:\n{classification_report(y_test, yhat, target_names=['No Claim', 'Claim'])}")
 print(f"\nConfusion Matrix:\n{confusion_matrix(y_test, yhat)}")
 
+feature_names = numeric_columns + list(encoder.get_feature_names_out(categorical_columns))
+
+lr_step = LR_best.named_steps['logisticregression']
+coefs   = lr_step.coef_[0]
+odds_ratios = np.exp(coefs)
+
+# table
+coef_table = pd.DataFrame({
+    'Feature':     feature_names,
+    'Coefficient': coefs.round(4),
+    'Odds Ratio':  odds_ratios.round(4),
+}).sort_values('Odds Ratio', ascending=False)
+
+coef_table['Effect'] = coef_table['Coefficient'].apply(
+    lambda x: 'Increases claim probability' if x > 0 else 'Decreases claim probability'
+)
+print("\n── Logistic Regression Coefficients ──")
+print(coef_table.to_string(index=False))
+
+report_table = coef_table[
+    (coef_table['Odds Ratio'] > 1.05) | (coef_table['Odds Ratio'] < 0.95)
+].copy()
+report_table['Odds Ratio'] = report_table['Odds Ratio'].round(3)
+report_table['Coefficient'] = report_table['Coefficient'].round(3)
+
+print("\n── Report Table (notable effects only) ──")
+print(report_table[['Feature', 'Odds Ratio', 'Effect']].to_string(index=False))
+
 #Gamma regression
 df_sev= pd.read_csv(r"C:\Users\User\Desktop\KU Leuven. Msc Statistics. Year 1\Statistical Consulting\severity.csv")
 print(df_sev.head())
@@ -88,14 +114,25 @@ df_freq['profitable'] = np.where(
     df_freq['expected_cost'] > threshold,
     'Unprofitable', 'Profitable'
 )
-print(df_freq.groupby('profitable')[['age','density','carVal','expected_cost']].mean())
+print(df_freq.groupby('profitable')[['age','density','expected_cost']].mean())
 
 # Profile unprofitable customers
-print(df_freq.groupby('profitable')[
-    ['age', 'density', 'carVal', 'expected_cost']
-].mean().round(2))
 print(df_freq.groupby(['profitable', 'job']).size().unstack())
 print(df_freq.groupby(['profitable', 'carType']).size().unstack())
+
+df_freq['age_group'] = pd.cut(df_freq['age'],
+                              bins=[0, 25, 45, 65, 100],
+                              labels=['<25', '25-45', '45-65', '65+'])
+
+df_freq['density_group'] = pd.qcut(df_freq['density'],
+                                   q=3,
+                                   labels=['Low Density', 'Medium Density', 'High Density'])
+
+df_freq['nYears_group'] = pd.cut(df_freq['nYears'],
+                                 bins=[-1, 2, 5, 10, 50],
+                                 labels=['0-2 yrs', '3-5 yrs', '6-10 yrs', '10+ yrs'])
+print(df_freq.groupby(['profitable', 'gender']).size().unstack(fill_value=0))
+print(df_freq.groupby(['profitable', 'density_group']).size().unstack(fill_value=0))
 
 # Table of persons from frequency dataset with expected cost and label as profitable/unprofitable
 output = df_freq[['gender', 'job', 'carType', 'age', 'density', 'cover',
@@ -107,7 +144,7 @@ output['profitable']    = np.where(output['expected_cost'] > threshold,
                                    'Unprofitable', 'Profitable')
 print(output.head(20).to_string(index=True))
 
-# Misclassification Cost Analysis 
+# Misclassification Cost Analysis
 cm = confusion_matrix(y_test, yhat)
 tn, fp, fn, tp = cm.ravel()
 
@@ -118,7 +155,7 @@ print(f"True Positives  (correct claim):      {tp}")
 
 # Cost assumptions
 cost_fp = 50    # administrative cost of incorrectly flagging a non-claimant
-cost_fn = 637   # average claim size from severity MAE (approximation)
+cost_fn = 804   # average claim size from severity MAE (approximation)
 
 total_fp_cost = fp * cost_fp
 total_fn_cost = fn * cost_fn
@@ -140,15 +177,6 @@ print(f"Estimated annual misclassification cost: €{scaled_cost:,.0f}")
 ratio = total_fn_cost / total_fp_cost
 print(f"\nFalse Negative cost is {ratio:.1f}x larger than False Positive cost")
 
-# Summary table
-cost_table = pd.DataFrame({
-    'Type':       ['False Positive', 'False Negative', 'Total'],
-    'Count':      [fp,              fn,               fp + fn],
-    'Unit Cost':  [f'€{cost_fp}',  f'€{cost_fn}',   ''],
-    'Total Cost': [f'€{total_fp_cost:,}', f'€{total_fn_cost:,}',
-                   f'€{total_cost:,}']
-})
-print(f"\n{cost_table.to_string(index=False)}")
 
 #Graphs
 #Figure 1
@@ -201,7 +229,45 @@ plt.savefig('figure_1.png', dpi=300,
 plt.show()
 print("Saved: figure_1.png")
 
-#Figure 2 
+def serious_style(ax):
+    ax.set_facecolor('white')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_edgecolor('#cccccc')
+    ax.spines['bottom'].set_edgecolor('#cccccc')
+    ax.tick_params(colors=TEXT, labelsize=10)
+    ax.set_axisbelow(True)
+
+def make_unprofitable_chart(categories, prof, unprof, filename, figsize=(8, 4)):
+    total      = [p + u for p, u in zip(prof, unprof)]
+    unprof_pct = [u / t * 100 for u, t in zip(unprof, total)]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor('white')
+    serious_style(ax)
+
+    bar_colors = [RED if p > 15 else BLUE for p in unprof_pct]
+    ax.barh(categories, unprof_pct, color=bar_colors, alpha=0.9, height=0.5)
+    ax.axvline(15, color=MUTED, lw=1.5, linestyle='--', label='Portfolio threshold (15%)')
+
+    ax.set_xlabel('Share Flagged as Unprofitable (%)', fontsize=10,
+                  fontfamily='serif', color=TEXT)
+    ax.legend(fontsize=9, framealpha=0.4, prop={'family': 'serif'})
+    ax.grid(axis='x', lw=0.6, alpha=0.4, linestyle='--')
+    ax.set_xlim(0, max(unprof_pct) + 10)
+
+    for label in ax.get_yticklabels():
+        label.set_fontfamily('serif')
+        label.set_fontsize(10)
+    for i, v in enumerate(unprof_pct):
+        ax.text(v + 0.5, i, f'{v:.1f}%', va='center',
+                fontsize=9, color=TEXT, fontfamily='serif')
+
+    plt.tight_layout(pad=2.0)
+    plt.savefig(filename, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.show()
+    print(f"Saved: {filename}")
+# ── Occupation ──
 def serious_style(ax):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -227,7 +293,50 @@ for i, v in enumerate(unprof_pct):
     ax1.text(v + 0.5, i, f'{v:.1f}%', va='center',
              fontsize=9, color=TEXT, fontfamily='serif')
 plt.tight_layout(pad=2.0)
-plt.savefig('figure_2.png', dpi=300,
+plt.savefig('appendix_occupation.png', dpi=300,
             bbox_inches='tight', facecolor='white')
 plt.show()
-print("Saved: figure_2.png")
+print("Saved: appendix_occupation.png")
+# ── Age Groups ──
+make_unprofitable_chart(
+    categories = ['65+', '45–65', '25–45', '<25'],
+    prof       = [1342, 5972, 10659, 3085],
+    unprof     = [0,    65,   1432,  2219],
+    filename   = 'appendix_age.png'
+)
+
+# ── Population Density ──
+make_unprofitable_chart(
+    categories = ['Low Density', 'Medium Density', 'High Density'],
+    prof       = [8102, 7539, 5417],
+    unprof     = [175,  716,  2825],
+    filename   = 'appendix_density.png',
+    figsize    = (8, 3.5)
+)
+
+# ── Car Type ──
+make_unprofitable_chart(
+    categories = ['E', 'D', 'C', 'B', 'A'],
+    prof       = [3869, 4503, 2965, 4348, 5373],
+    unprof     = [533,  579,  505,  937,  1162],
+    filename   = 'appendix_cartype.png',
+    figsize    = (8, 4)
+)
+
+# ── Gender ──
+make_unprofitable_chart(
+    categories = ['Female', 'Male'],
+    prof       = [7762,  13296],
+    unprof     = [712,   3004],
+    filename   = 'appendix_gender.png',
+    figsize    = (8, 3)
+)
+
+# ── Years Insured ──
+make_unprofitable_chart(
+    categories = ['10+ yrs', '6–10 yrs', '3–5 yrs', '0–2 yrs'],
+    prof       = [3958, 4867, 4578, 7655],
+    unprof     = [436,  774,  792,  1714],
+    filename   = 'appendix_years.png',
+    figsize    = (8, 4)
+)
